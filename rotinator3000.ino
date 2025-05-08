@@ -3,10 +3,17 @@
 #include <Adafruit_Sensor.h>
 #include <Wire.h>
 #include <WiFi.h>
+#include <AceButton.h>
+#include <Adafruit_NeoPixel.h>
 #include "esp_now_midi.h"
 
+using namespace ace_button;
+Adafruit_NeoPixel _leds(NUMBER_OF_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
+
+
+// Timing variables for MIDI message sending
 unsigned long lastSendTime = 0;
-const unsigned long sendInterval = 16;
+
 
 esp_now_midi ESP_NOW_MIDI;
 void customOnDataSent(const uint8_t* mac_addr, esp_now_send_status_t status) {
@@ -23,8 +30,26 @@ float gyroZoffset = 0;    // Calibration offset
 unsigned long lastMicros = 0;
 bool isCalibrating = true;
 
+AceButton _buttons[NUMBER_OF_BUTTONS];
+void handleEvent(AceButton*, uint8_t, uint8_t);
+
+
 void setup() {
   Serial.begin(115200);
+
+  for (uint8_t i = 0; i < NUMBER_OF_BUTTONS; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+    _buttons[i].init(buttonPins[i], HIGH, i);
+  }
+  ButtonConfig* buttonConfig = ButtonConfig::getSystemButtonConfig();
+  buttonConfig->setEventHandler(handleEvent);
+  buttonConfig->setFeature(ButtonConfig::kFeatureClick);
+  buttonConfig->setFeature(ButtonConfig::kFeatureDoubleClick);
+
+  _leds.begin();  // INITIALIZE NeoPixel strip object (REQUIRED)
+  _leds.show();   // Turn OFF all pixels ASAP
+  _leds.setBrightness(50);
+
   WiFi.mode(WIFI_STA);
   ESP_NOW_MIDI.setup(broadcastAddress, customOnDataSent);
 
@@ -32,7 +57,7 @@ void setup() {
 
   if (!mpu.begin()) {
     Serial.println("MPU6050 not found!");
-    while (1) delay(10);
+    // while (1) delay(10);
   }
 
   mpu.setGyroRange(MPU6050_RANGE_250_DEG);
@@ -42,9 +67,20 @@ void setup() {
   Serial.println("Angle(°)\tSpeed(°/s)");
   lastMicros = micros();
   lastSendTime = millis();
+
+
+  _leds.setPixelColor(0, _leds.Color(255, 0, 0));
+  _leds.setPixelColor(1, _leds.Color(0, 255, 0));
+  _leds.setPixelColor(2, _leds.Color(0, 0, 255));
+  _leds.setPixelColor(3, _leds.Color(255, 0, 255));
+
+  _leds.show();
 }
 
 void loop() {
+  for (uint8_t i = 0; i < NUMBER_OF_BUTTONS; i++) {
+    _buttons[i].check();
+  }
   sensors_event_t a, g, temp;
   mpu.getEvent(&a, &g, &temp);
 
@@ -55,7 +91,7 @@ void loop() {
 
   // Get raw rotation speed (in rad/s) and apply offset
   float rawGyroZ = g.gyro.z - gyroZoffset;
-  
+
   // Convert from rad/s to deg/s
   rotationSpeed = rawGyroZ * RAD_TO_DEG;
 
@@ -90,20 +126,18 @@ void loop() {
   unsigned long currentMillis = millis();
   if (currentMillis - lastSendTime >= sendInterval) {
     lastSendTime = currentMillis;
-    
+
     // Send MIDI data every 10ms
     auto result = ESP_NOW_MIDI.sendControlChange(1, map(yaw, 0, 359, 0, 127), MIDI_CHANNEL);
-    // Send speed on second CC channel
-    ESP_NOW_MIDI.sendControlChange(2, map(constrain(abs(rotationSpeed), 0, 100), 0, 100, 0, 127), MIDI_CHANNEL);
-    
-    // Print both angle and speed (optional - could also be rate-limited if desired)
-    Serial.print(yaw);
-    Serial.print("\t\t");
-    Serial.println(rotationSpeed);
-  }
 
-  // No fixed delay needed anymore since we're using timed sending
-  // This allows the gyro readings to happen as fast as possible
+    // Send speed on second CC channel with configurable sensitivity
+    // ESP_NOW_MIDI.sendControlChange(2, map(constrain(abs(rotationSpeed), 0, speedSensitivity), 0, speedSensitivity, 0, 127), MIDI_CHANNEL);
+
+    // Print both angle and speed
+    // Serial.print(yaw);
+    // Serial.print("\t\t");
+    // Serial.println(rotationSpeed);
+  }
 }
 
 void calibrateZaxis() {
@@ -118,4 +152,23 @@ void calibrateZaxis() {
   gyroZoffset = sum / 200;
   yaw = 0;
   rotationSpeed = 0;
+}
+
+void handleEvent(AceButton* button, uint8_t eventType, uint8_t buttonState) {
+
+  // Print out a message for all events.
+  Serial.print(F("handleEvent(): eventType: "));
+  Serial.print(AceButton::eventName(eventType));
+  Serial.print(F("; buttonState: "));
+  Serial.println(buttonState);
+
+
+  switch (eventType) {
+    case AceButton::kEventPressed:
+
+      break;
+    case AceButton::kEventReleased:
+
+      break;
+  }
 }
